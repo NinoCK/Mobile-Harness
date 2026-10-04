@@ -139,6 +139,28 @@ fun providersForAgent(agent: AgentKind): List<ProviderKind> = when (agent) {
     AgentKind.ANTIGRAVITY -> emptyList()
 }
 
+/** Claude Code `--model` choices for a Claude subscription; "default" uses the plan's default. */
+val ClaudeSubscriptionModels: List<Pair<String, String>> = listOf(
+    "default" to "Default",
+    "opus" to "Opus",
+    "sonnet" to "Sonnet",
+    "haiku" to "Haiku",
+    "fable" to "Fable",
+    "best" to "Best",
+    "opusplan" to "Opus Plan",
+)
+
+/** Claude Code `--effort` levels; "ultracode" is Claude Code's alias for xhigh plus multi-agent workflows. */
+val ClaudeEffortLevels: List<Pair<String, String>> = listOf(
+    "default" to "Default",
+    "low" to "Low",
+    "medium" to "Medium",
+    "high" to "High",
+    "xhigh" to "Extra high",
+    "max" to "Max",
+    "ultracode" to "Ultracode",
+)
+
 data class ProviderProfile(
     val kind: ProviderKind,
     val baseUrl: String = kind.defaultBaseUrl,
@@ -230,6 +252,28 @@ data class WorkspaceEntry(
     val isDirectory: Boolean,
     val depth: Int,
     val sizeBytes: Long = 0,
+    /** Direct children on disk; only meaningful for directories. */
+    val childCount: Int = 0,
+    val modifiedMillis: Long = 0,
+)
+
+enum class FileExportPhase { SCANNING, WRITING, DONE, FAILED }
+
+/** Progress of a workspace export to a user-picked document (a ZIP archive or a single raw file). */
+data class FileExportState(
+    val id: Long,
+    val fileName: String,
+    val isArchive: Boolean,
+    val phase: FileExportPhase = FileExportPhase.SCANNING,
+    val filesDone: Int = 0,
+    val filesTotal: Int = 0,
+    val bytesDone: Long = 0,
+    val bytesTotal: Long = 0,
+    val currentPath: String = "",
+    val skippedFiles: Int = 0,
+    val error: String? = null,
+    /** content:// URI of the document being written, used to reveal it once saved. */
+    val documentUri: String? = null,
 )
 
 enum class RiskLevel { SAFE, REVIEW, HIGH }

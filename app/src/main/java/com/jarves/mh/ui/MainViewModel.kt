@@ -2,7 +2,9 @@ package com.jarves.mh.ui
 
 import android.app.Application
 import android.content.Intent
+import androidx.browser.customtabs.CustomTabsIntent
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.os.SystemClock
 import android.os.Build
@@ -25,10 +27,15 @@ import com.jarves.mh.model.Project
 import com.jarves.mh.model.ProjectKind
 import com.jarves.mh.model.ProjectChat
 import com.jarves.mh.model.ProviderKind
+import com.jarves.mh.model.ClaudeEffortLevels
+import com.jarves.mh.model.ClaudeSubscriptionModels
 import com.jarves.mh.model.ProviderProfile
 import com.jarves.mh.model.RuntimeEvent
 import com.jarves.mh.model.ToolRequest
 import com.jarves.mh.model.WorkspaceEntry
+import com.jarves.mh.model.FileExportPhase
+import com.jarves.mh.model.FileExportState
+import com.jarves.mh.data.WorkspaceFileOps
 import com.jarves.mh.model.projectSlug
 import com.jarves.mh.model.generateQuickChatIdentity
 import com.jarves.mh.model.providerProtocolForAgent
@@ -44,6 +51,8 @@ import com.jarves.mh.runtime.AntigravityAuthController
 import com.jarves.mh.runtime.AntigravityAuthState
 import com.jarves.mh.runtime.AntigravityAuthStatus
 import com.jarves.mh.runtime.AntigravityRuntimeBridge
+import com.jarves.mh.runtime.ClaudeAuthController
+import com.jarves.mh.runtime.ClaudeAuthState
 import com.jarves.mh.runtime.NativeSpawnProcess
 import com.jarves.mh.runtime.RuntimeInstallProgress
 import com.jarves.mh.runtime.RuntimeInstaller
@@ -64,8 +73,11 @@ import java.nio.file.Files
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
-import java.util.zip.ZipOutputStream
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -105,6 +117,15 @@ private fun antigravityModelWithEffort(model: String, effort: String): String? {
     val match = ANTIGRAVITY_MODEL_EFFORT.matchEntire(model) ?: return null
     return "${match.groupValues[1]}-$effort"
 }
+
+private data class WorkspaceSnapshot(
+    val directory: String,
+    val entries: List<WorkspaceEntry>,
+    val selection: Set<String>,
+    val artifacts: List<WorkspaceEntry>,
+    val suggestedRoot: String?,
+    val androidProjectDetected: Boolean,
+)
 
 private data class ProjectTerminalSnapshot(
     val lines: List<TerminalOutputLine> = emptyList(),
@@ -176,6 +197,13 @@ data class AppUiState(
     val workspaceFiles: List<WorkspaceEntry> = emptyList(),
     val androidProjectDetected: Boolean = false,
     val filesLoading: Boolean = false,
+    /** Folder shown in the Files tab ("" = project root); [workspaceFiles] holds its children. */
+    val workspaceCurrentDir: String = "",
+    /** Files and folders ticked in the Files tab for a selection export, keyed by root-relative path. */
+    val workspaceSelection: Map<String, WorkspaceEntry> = emptyMap(),
+    /** Installable build outputs (APK/AAB) surfaced at the top of the Files tab. */
+    val workspaceArtifacts: List<WorkspaceEntry> = emptyList(),
+    val fileExport: FileExportState? = null,
     val openedFilePath: String? = null,
     val openedFileContent: String? = null,
     val fileContentLoading: Boolean = false,
@@ -232,6 +260,8 @@ data class AppUiState(
     val agentUpdateTotalBytes: Long? = null,
     val agentUpdateBytesPerSecond: Long? = null,
     val antigravityAuth: AntigravityAuthState = AntigravityAuthState(),
+    val claudeAuth: ClaudeAuthState = ClaudeAuthState(),
+    val claudeEffort: String = "default",
     val antigravityModel: String = "",
     val antigravityEffort: String = "high",
     val antigravityModels: List<String> = emptyList(),
@@ -248,7 +278,9 @@ data class AppUiState(
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val vault = ApiKeyVault(application)
     private val preferences = AppPreferences(application)
-    private val claudeRuntime = ClaudeRuntimeBridge(application) { profile -> vault.get(profile.kind.name) }
+    private val claudeRuntime = ClaudeRuntimeBridge(application, effort = { _state.value.claudeEffort }) { profile ->
+        vault.get(profile.kind.name)
+    }
     private val dshRuntime = DshRuntimeBridge(application) { profile -> vault.get(profile.kind.name) }
     private val installer = RuntimeInstaller(application)
     private val antigravityRuntime = AntigravityRuntimeBridge(
@@ -276,7 +308,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     @Volatile private var setupCompletionHandled: Boolean = false
     @Volatile private var githubAuthProcess: Process? = null
     private var githubAuthJob: kotlinx.coroutines.Job? = null
+    private var exportJob: Job? = null
     @Volatile private var lastOpenedAntigravityAuthUrl: String? = null
+    @Volatile private var lastOpenedClaudeAuthUrl: String? = null
     private var activeRuntimeRequest: RuntimeRetryRequest? = null
     private val failedApiKeyIds = mutableSetOf<String>()
     private val transcriptWrites = Channel<TranscriptWrite>(Channel.UNLIMITED)
@@ -294,6 +328,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         preferences.antigravityAccountEmail = email.orEmpty()
         if (!signedIn) preferences.clearAgentConversations(AgentKind.ANTIGRAVITY)
     }
+    private val claudeAuthController = ClaudeAuthController(application) { token ->
+        viewModelScope.launch(Dispatchers.Main) { onClaudeSubscriptionToken(token) }
+    }
     private val _state = MutableStateFlow(
         AppUiState(
             onboardingComplete = preferences.onboardingComplete,
@@ -310,6 +347,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ),
             antigravityModel = preferences.antigravityModel,
             antigravityEffort = preferences.antigravityEffort,
+            claudeEffort = preferences.claudeEffort,
             themeMode = runCatching { com.jarves.mh.ui.theme.AppThemeMode.valueOf(preferences.themeMode.uppercase()) }
                 .getOrDefault(com.jarves.mh.ui.theme.AppThemeMode.DARK),
             projects = preferences.loadProjects(),
@@ -346,6 +384,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }.onFailure {
                         _state.update { state -> state.copy(toastMessage = "Could not open the browser. Copy the sign-in URL instead.") }
                     }
+                }
+            }
+        }
+        viewModelScope.launch {
+            claudeAuthController.state.collect { auth ->
+                _state.update { it.copy(claudeAuth = auth) }
+                auth.authorizationUrl?.takeIf { it != lastOpenedClaudeAuthUrl }?.let { url ->
+                    lastOpenedClaudeAuthUrl = url
+                    openSignInPage(url)
                 }
             }
         }
@@ -1503,6 +1550,73 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Starts the official on-device `claude setup-token` sign-in and opens the browser for it. */
+    fun startClaudeLogin() {
+        if (_state.value.agentInstalling != null || _state.value.isRunning) return
+        lastOpenedClaudeAuthUrl = null
+        viewModelScope.launch { claudeAuthController.beginLogin() }
+    }
+
+    /** Fallback for when the browser cannot redirect back: open the page that shows a one-time code. */
+    fun openClaudeManualLogin() {
+        val url = _state.value.claudeAuth.manualUrl
+        if (url == null) {
+            _state.update { it.copy(toastMessage = "The code sign-in page is not ready yet. Try again in a moment.") }
+            return
+        }
+        openSignInPage(url)
+    }
+
+    fun reopenClaudeLogin() {
+        _state.value.claudeAuth.authorizationUrl?.let(::openSignInPage) ?: openClaudeManualLogin()
+    }
+
+    /**
+     * Opens Claude sign-in in a Custom Tab (an in-app browser sheet backed by
+     * the user's browser). Unlike a WebView it can use existing sessions and
+     * Google sign-in, and it follows the redirect to Claude Code's localhost
+     * listener.
+     */
+    private fun openSignInPage(url: String) {
+        runCatching {
+            val tab = CustomTabsIntent.Builder().setShowTitle(true).build()
+            tab.intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            tab.launchUrl(getApplication(), Uri.parse(url))
+        }.onFailure { openExternalUrl(url) }
+    }
+
+    fun submitClaudeAuthCode(code: String) {
+        viewModelScope.launch {
+            runCatching { claudeAuthController.submitCode(code) }
+                .onFailure { error -> _state.update { it.copy(toastMessage = error.message ?: "Could not submit the code") } }
+        }
+    }
+
+    fun cancelClaudeLogin() = claudeAuthController.cancel()
+
+    /** Claude Code model alias for subscription runs; stored with the provider profile. */
+    fun setClaudeModel(model: String) {
+        val current = _state.value.provider
+        if (current.kind != ProviderKind.CLAUDE || model !in ClaudeSubscriptionModels.map { it.first }) return
+        val updated = current.copy(model = model)
+        preferences.saveProvider(updated, _state.value.agentKind)
+        _state.update { it.copy(provider = updated) }
+    }
+
+    fun setClaudeEffort(effort: String) {
+        if (effort !in ClaudeEffortLevels.map { it.first }) return
+        preferences.claudeEffort = effort
+        _state.update { it.copy(claudeEffort = effort) }
+    }
+
+    private fun onClaudeSubscriptionToken(token: String) {
+        val current = _state.value.provider
+        val profile = if (current.kind == ProviderKind.CLAUDE) current else ProviderProfile(ProviderKind.CLAUDE)
+        // Same path as a manually pasted token: Keystore-encrypted, replaces the active one.
+        finishOnboarding(profile, token)
+        _state.update { it.copy(toastMessage = "Claude subscription connected") }
+    }
+
     fun setAntigravityModel(model: String) {
         preferences.antigravityModel = model
         val modelEffort = antigravityEffortFromModel(model)
@@ -1879,6 +1993,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 taskFinishedAtMillis = null,
                 changes = emptyList(),
                 workspaceFiles = emptyList(),
+                workspaceCurrentDir = "",
+                workspaceSelection = emptyMap(),
+                workspaceArtifacts = emptyList(),
                 androidProjectDetected = false,
                 filesLoading = true,
                 projectTerminalLines = terminal.lines,
@@ -1948,6 +2065,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 activeChatId = null,
                 changes = emptyList(),
                 workspaceFiles = emptyList(),
+                workspaceCurrentDir = "",
+                workspaceSelection = emptyMap(),
+                workspaceArtifacts = emptyList(),
                 androidProjectDetected = false,
                 filesLoading = false,
                 isRunning = false,
@@ -2030,6 +2150,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 taskFinishedAtMillis = null,
                 changes = emptyList(),
                 workspaceFiles = emptyList(),
+                workspaceCurrentDir = "",
+                workspaceSelection = emptyMap(),
+                workspaceArtifacts = emptyList(),
                 androidProjectDetected = false,
                 filesLoading = true,
                 projectTerminalLines = emptyList(),
@@ -2676,67 +2799,188 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 suggestedProjectRoot = null,
                 projectTerminalCwd = guestRoot,
                 changes = emptyList(),
+                workspaceCurrentDir = "",
+                workspaceSelection = emptyMap(),
                 toastMessage = "$root is now the project root",
             )
         }
         refreshProjectFiles()
     }
 
-    fun exportActiveProject(uri: Uri) {
+    /** Zips the whole project; build outputs and caches are left out unless [includeBuildFiles]. */
+    fun exportActiveProject(uri: Uri, includeBuildFiles: Boolean) =
+        startWorkspaceExport(uri, paths = null, includeBuildFiles = includeBuildFiles, asZip = true)
+
+    /** Zips the files and folders currently ticked in the Files tab. */
+    fun exportWorkspaceSelection(uri: Uri, includeBuildFiles: Boolean) {
+        val paths = _state.value.workspaceSelection.keys.toList()
+        if (paths.isEmpty()) return
+        startWorkspaceExport(uri, paths, includeBuildFiles, asZip = true)
+    }
+
+    /** Saves one file (e.g. a built APK) verbatim. */
+    fun saveWorkspaceFile(uri: Uri, path: String) =
+        startWorkspaceExport(uri, listOf(path), includeBuildFiles = true, asZip = false)
+
+    fun setWorkspaceSelection(selection: Map<String, WorkspaceEntry>) {
+        _state.update { it.copy(workspaceSelection = selection) }
+    }
+
+    fun cancelWorkspaceExport() {
+        exportJob?.cancel()
+    }
+
+    fun dismissWorkspaceExport() {
+        if (exportJob?.isActive == true) return
+        _state.update { it.copy(fileExport = null) }
+    }
+
+    private fun startWorkspaceExport(uri: Uri, paths: List<String>?, includeBuildFiles: Boolean, asZip: Boolean) {
         val current = _state.value
         val project = current.activeProject ?: return
-        if (current.isRunning || current.projectTerminalRunning) {
-            _state.update { it.copy(toastMessage = "Stop the running task before exporting") }
+        val exportBusy = exportJob?.isActive == true
+        if (exportBusy || current.isRunning || current.projectTerminalRunning) {
+            // The picker already created an empty document; don't leave it behind.
+            viewModelScope.launch(Dispatchers.IO) { deleteDocumentQuietly(uri) }
+            _state.update {
+                it.copy(toastMessage = if (exportBusy) "An export is already running" else "Stop the running task before exporting")
+            }
             return
         }
-        viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val root = projectWorkspaceRoot(project)
-                    val rootPath = root.canonicalFile.toPath()
-                    val output = getApplication<Application>().contentResolver.openOutputStream(uri)
+        val exportId = SystemClock.elapsedRealtime()
+        val selection = paths?.let { WorkspaceFileOps.normalizeSelection(it, skipBuildFiles = !includeBuildFiles) }
+        val root = projectWorkspaceRoot(project)
+        val singleFile = selection?.singleOrNull()
+            ?.takeIf { !asZip }
+            ?.let { WorkspaceFileOps.resolveInside(root, it) }
+            ?.takeIf { it.isFile }
+        val displayName = queryDisplayName(uri)
+            ?: singleFile?.name
+            ?: "${project.slug}.zip"
+        _state.update {
+            it.copy(
+                fileExport = FileExportState(
+                    id = exportId,
+                    fileName = displayName,
+                    isArchive = singleFile == null,
+                    documentUri = uri.toString(),
+                ),
+            )
+        }
+
+        fun publish(transform: (FileExportState) -> FileExportState) {
+            _state.update { state ->
+                val export = state.fileExport?.takeIf { it.id == exportId } ?: return@update state
+                state.copy(fileExport = transform(export))
+            }
+        }
+
+        exportJob = viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val checkActive = { coroutineContext.ensureActive() }
+                    var lastPublish = 0L
+                    val output = getApplication<Application>().contentResolver.openOutputStream(uri, "w")
                         ?: error("The selected location could not be opened")
-                    output.buffered().use { stream ->
-                        ZipOutputStream(stream).use { zip ->
-                            zip.putNextEntry(ZipEntry("${project.slug}/"))
-                            zip.closeEntry()
-                            root.walkTopDown()
-                                .onEnter { directory ->
-                                    if (directory == root) {
-                                        true
-                                    } else {
-                                        val relative = directory.relativeTo(root).invariantSeparatorsPath
-                                        !isExportExcludedPath(relative) &&
-                                            !Files.isSymbolicLink(directory.toPath()) &&
-                                            runCatching { directory.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
+                    output.use { stream ->
+                        if (singleFile != null) {
+                            val relative = selection.single()
+                            val size = singleFile.length()
+                            publish { it.copy(phase = FileExportPhase.WRITING, filesTotal = 1, bytesTotal = size, currentPath = relative) }
+                            WorkspaceFileOps.writeSingleFile(singleFile, relative, stream, checkActive) { progress ->
+                                val now = SystemClock.elapsedRealtime()
+                                if (now - lastPublish >= EXPORT_PROGRESS_INTERVAL_MS) {
+                                    lastPublish = now
+                                    publish { it.copy(bytesDone = progress.bytesDone) }
+                                }
+                            }
+                        } else {
+                            val plan = WorkspaceFileOps.planExport(root, selection, !includeBuildFiles, checkActive) { scanned ->
+                                publish { it.copy(filesTotal = scanned) }
+                            }
+                            if (plan.items.isEmpty()) error("Nothing to export. The selected files no longer exist.")
+                            publish {
+                                it.copy(phase = FileExportPhase.WRITING, filesTotal = plan.fileCount, bytesTotal = plan.totalBytes)
+                            }
+                            WorkspaceFileOps.writeZip(plan, stream, project.slug, checkActive) { progress ->
+                                val now = SystemClock.elapsedRealtime()
+                                if (now - lastPublish >= EXPORT_PROGRESS_INTERVAL_MS) {
+                                    lastPublish = now
+                                    publish {
+                                        it.copy(
+                                            filesDone = progress.filesDone,
+                                            bytesDone = progress.bytesDone,
+                                            currentPath = progress.currentPath,
+                                            skippedFiles = progress.skippedFiles,
+                                        )
                                     }
                                 }
-                                .drop(1)
-                                .filter { file ->
-                                    !Files.isSymbolicLink(file.toPath()) &&
-                                        runCatching { file.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false) &&
-                                        !isExportExcludedPath(file.relativeTo(root).invariantSeparatorsPath)
-                                }
-                                .forEach { file ->
-                                    val relative = file.relativeTo(root).invariantSeparatorsPath
-                                    val entryName = "${project.slug}/$relative" + if (file.isDirectory) "/" else ""
-                                    zip.putNextEntry(ZipEntry(entryName).apply { time = file.lastModified() })
-                                    if (file.isFile) file.inputStream().buffered().use { it.copyTo(zip) }
-                                    zip.closeEntry()
-                                }
+                            }
                         }
                     }
                 }
-            }
-            _state.update {
-                it.copy(
-                    toastMessage = result.fold(
-                        onSuccess = { "${project.slug}.zip exported" },
-                        onFailure = { error -> "Export failed: ${error.message ?: "Unknown error"}" },
-                    ),
-                )
+                publish {
+                    it.copy(
+                        phase = FileExportPhase.DONE,
+                        bytesDone = it.bytesTotal,
+                        filesDone = it.filesTotal - it.skippedFiles,
+                    )
+                }
+                if (paths != null && asZip) _state.update { it.copy(workspaceSelection = emptyMap()) }
+            } catch (cancelled: CancellationException) {
+                withContext(NonCancellable + Dispatchers.IO) { deleteDocumentQuietly(uri) }
+                _state.update { state ->
+                    if (state.fileExport?.id == exportId) state.copy(fileExport = null, toastMessage = "Export cancelled") else state
+                }
+                throw cancelled
+            } catch (error: Throwable) {
+                withContext(NonCancellable + Dispatchers.IO) { deleteDocumentQuietly(uri) }
+                publish { it.copy(phase = FileExportPhase.FAILED, error = error.message ?: "Unknown error") }
             }
         }
+    }
+
+    /**
+     * Opens the folder holding the finished export in the system file manager. Providers that cannot
+     * report the parent folder fall back to opening the saved file itself.
+     */
+    fun openExportLocation() {
+        val export = _state.value.fileExport?.takeIf { it.phase == FileExportPhase.DONE } ?: return
+        val uri = export.documentUri?.let(Uri::parse) ?: return
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            val (folder, mimeType) = withContext(Dispatchers.IO) {
+                exportParentFolder(uri) to (app.contentResolver.getType(uri) ?: if (export.isArchive) "application/zip" else "application/octet-stream")
+            }
+            val opened = listOfNotNull(
+                folder?.let { Intent(Intent.ACTION_VIEW).setDataAndType(it, DocumentsContract.Document.MIME_TYPE_DIR) },
+                Intent(Intent.ACTION_VIEW).setDataAndType(uri, mimeType).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+            ).any { intent ->
+                runCatching { app.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
+            }
+            _state.update { state ->
+                when {
+                    !opened -> state.copy(toastMessage = "No file manager could open ${export.fileName}")
+                    state.fileExport?.id == export.id -> state.copy(fileExport = null)
+                    else -> state
+                }
+            }
+        }
+    }
+
+    private fun exportParentFolder(uri: Uri): Uri? = runCatching {
+        val path = DocumentsContract.findDocumentPath(getApplication<Application>().contentResolver, uri)?.path.orEmpty()
+        path.getOrNull(path.size - 2)?.let { parentId -> DocumentsContract.buildDocumentUri(uri.authority, parentId) }
+    }.getOrNull()
+
+    private fun queryDisplayName(uri: Uri): String? = runCatching {
+        getApplication<Application>().contentResolver
+            .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+    }.getOrNull()?.takeIf { it.isNotBlank() }
+
+    private fun deleteDocumentQuietly(uri: Uri) {
+        runCatching { DocumentsContract.deleteDocument(getApplication<Application>().contentResolver, uri) }
     }
 
     fun createChat() {
@@ -2782,26 +3026,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun refreshProjectFiles() {
+    fun refreshProjectFiles() = loadWorkspaceDirectory(_state.value.workspaceCurrentDir)
+
+    /** Shows [path] ("" = project root) in the Files tab. */
+    fun openWorkspaceDirectory(path: String) = loadWorkspaceDirectory(path.trim('/'))
+
+    private fun loadWorkspaceDirectory(requested: String) {
         val project = _state.value.activeProject ?: return
-        _state.update { it.copy(filesLoading = true) }
+        _state.update {
+            it.copy(
+                filesLoading = true,
+                workspaceCurrentDir = requested,
+                workspaceFiles = if (it.workspaceCurrentDir == requested) it.workspaceFiles else emptyList(),
+            )
+        }
         viewModelScope.launch {
-            val (entries, suggestedRoot, androidProjectDetected) = withContext(Dispatchers.IO) {
-                Triple(
-                    readWorkspace(project),
-                    if (project.rootPath.isBlank()) detectNestedProjectRoot(project) else null,
-                    findAndroidGradleProjectRoot(projectWorkspaceRoot(project)) != null,
+            val selection = _state.value.workspaceSelection.keys
+            val snapshot = withContext(Dispatchers.IO) {
+                val root = projectWorkspaceRoot(project)
+                // Fall back to the nearest folder that still exists (the agent may have deleted it).
+                var directory = requested
+                while (directory.isNotEmpty() && WorkspaceFileOps.resolveInside(root, directory)?.isDirectory != true) {
+                    directory = directory.substringBeforeLast('/', "")
+                }
+                WorkspaceSnapshot(
+                    directory = directory,
+                    entries = WorkspaceFileOps.listDirectory(root, directory),
+                    selection = selection.filterTo(linkedSetOf()) { WorkspaceFileOps.resolveInside(root, it)?.exists() == true },
+                    artifacts = WorkspaceFileOps.findBuildArtifacts(root),
+                    suggestedRoot = if (project.rootPath.isBlank()) detectNestedProjectRoot(project) else null,
+                    androidProjectDetected = findAndroidGradleProjectRoot(root) != null,
                 )
             }
-            if (_state.value.activeProject?.id == project.id) {
-                _state.update {
-                    it.copy(
-                        workspaceFiles = entries,
-                        filesLoading = false,
-                        suggestedProjectRoot = suggestedRoot,
-                        androidProjectDetected = androidProjectDetected,
-                    )
-                }
+            _state.update {
+                // Ignore stale results after a project switch or a newer navigation.
+                if (it.activeProject?.id != project.id || it.workspaceCurrentDir != requested) return@update it
+                it.copy(
+                    workspaceCurrentDir = snapshot.directory,
+                    workspaceFiles = snapshot.entries,
+                    // Drop ticked paths that vanished from disk; keep anything ticked meanwhile.
+                    workspaceSelection = it.workspaceSelection.filterKeys { path ->
+                        path !in selection || path in snapshot.selection
+                    },
+                    workspaceArtifacts = snapshot.artifacts,
+                    filesLoading = false,
+                    suggestedProjectRoot = snapshot.suggestedRoot,
+                    androidProjectDetected = snapshot.androidProjectDetected,
+                )
             }
         }
     }
@@ -2833,55 +3104,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(openedFilePath = null, openedFileContent = null, fileContentLoading = false) }
     }
 
-
-    private fun readWorkspace(project: Project): List<WorkspaceEntry> {
-        val root = projectWorkspaceRoot(project)
-        if (!root.isDirectory) return emptyList()
-        val rootPath = root.canonicalFile.toPath()
-        return root.walkTopDown()
-            .maxDepth(12)
-            .onEnter { directory ->
-                val relative = if (directory == root) "" else directory.relativeTo(root).invariantSeparatorsPath
-                directory == root || (!isClaudeRuntimeMetadata(relative) &&
-                    !Files.isSymbolicLink(directory.toPath()) &&
-                    runCatching { directory.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
-                    )
-            }
-            .drop(1)
-            .filter { file ->
-                val relative = file.relativeTo(root).invariantSeparatorsPath
-                !isClaudeRuntimeMetadata(relative) &&
-                    !Files.isSymbolicLink(file.toPath()) &&
-                    runCatching { file.canonicalFile.toPath().startsWith(rootPath) }.getOrDefault(false)
-            }
-            .take(MAX_VISIBLE_WORKSPACE_ENTRIES)
-            .map { file ->
-                val relative = file.relativeTo(root).invariantSeparatorsPath
-                WorkspaceEntry(
-                    path = relative,
-                    name = file.name,
-                    isDirectory = file.isDirectory,
-                    depth = relative.count { it == '/' },
-                    sizeBytes = if (file.isFile) file.length() else 0,
-                )
-            }
-            .sortedWith(compareBy<WorkspaceEntry> { it.path.lowercase() }.thenByDescending { it.isDirectory })
-            .toList()
-    }
-
-    private fun isClaudeRuntimeMetadata(relativePath: String): Boolean {
-        return relativePath == ".claude" ||
-            relativePath == ".claude.json" ||
-            relativePath.startsWith(".claude/")
-    }
-
-    private fun isExportExcludedPath(relativePath: String): Boolean {
-        val excludedNames = setOf(
-            ".git", ".claude", ".gradle", ".idea", ".next", ".cache",
-            "node_modules", ".venv", "venv", "__pycache__", "build",
-        )
-        return relativePath.split('/').any { it in excludedNames } || isClaudeRuntimeMetadata(relativePath)
-    }
 
     fun addChatAttachments(uris: List<Uri>) {
         val current = _state.value
@@ -3536,7 +3758,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val MINIMUM_INITIALIZATION_SCREEN_MS = 3_000L
-        private const val MAX_VISIBLE_WORKSPACE_ENTRIES = 2_000
+        private const val EXPORT_PROGRESS_INTERVAL_MS = 80L
         private const val MAX_PROJECT_TERMINAL_HISTORY = 100
         private const val MAX_PROJECT_TERMINAL_OUTPUT = 200_000
         private const val MAX_ATTACHMENTS_PER_MESSAGE = 5

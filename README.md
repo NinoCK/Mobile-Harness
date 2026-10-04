@@ -231,6 +231,8 @@ Mobile Harness uses Claude Code's Anthropic-compatible API protocol. You can con
 | **DeepSeek Harness** | API-key providers | On demand | Existing DSH bridge and settings |
 | **Antigravity CLI** | Official Google OAuth flow | Version-pinned online download | Dedicated `agy` bridge, model, effort, and conversation IDs |
 
+For a Claude Pro, Max, Team, or Enterprise subscription, choose **Claude subscription** and tap **Sign in with Claude**. Mobile Harness runs the official `claude setup-token` command on the phone. The sign-in page opens in an in-app browser tab (Chrome Custom Tab), and after you approve it, claude.ai redirects back to Claude Code's own callback listener on `127.0.0.1`. Claude Code then creates a 1-year subscription token, and Mobile Harness stores it with Android Keystore encryption. If the browser can't return to the app, tap **Sign in with a code instead** and paste the code that the Claude page shows. You can still paste a token you made with `claude setup-token` on another computer.
+
 For Antigravity, select **Antigravity CLI**, install it, and tap **Sign in with Google**. Mobile Harness starts the official CLI login, opens the freshly generated Google URL in the system browser, and sends the returned one-time code back to that waiting process. The app does not embed Google login in a WebView and does not construct its own OAuth request.
 
 > [!WARNING]

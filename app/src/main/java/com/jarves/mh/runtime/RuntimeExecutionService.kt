@@ -54,7 +54,7 @@ class RuntimeExecutionService : Service() {
                 )
             }
             ACTION_COMPLETE -> finishTask(
-                title = "Task completed",
+                title = intent?.getStringExtra(EXTRA_TITLE)?.takeIf { it.isNotBlank() } ?: "Task completed",
                 detail = intent?.getStringExtra(EXTRA_DETAIL) ?: "Mobile Harness finished working in $projectName.",
                 failed = false,
             )
@@ -71,9 +71,11 @@ class RuntimeExecutionService : Service() {
             }
             else -> {
                 taskRunning = true
+                val detail = intent?.getStringExtra(EXTRA_DETAIL)?.takeIf { it.isNotBlank() }
+                    ?: "Claude Code is working in $projectName"
                 startForeground(
                     RUNNING_NOTIFICATION_ID,
-                    runningNotification("Claude Code is working in $projectName", includeStop = canStop),
+                    runningNotification(detail, includeStop = canStop),
                 )
                 acquireWakeLock()
             }

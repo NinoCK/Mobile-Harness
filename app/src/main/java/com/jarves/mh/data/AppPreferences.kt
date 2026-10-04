@@ -50,6 +50,11 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getString("agent_antigravity_effort", "high") ?: "high"
         set(value) { preferences.edit().putString("agent_antigravity_effort", value).apply() }
 
+    /** Claude Code `--effort` for subscription runs; "default" leaves it to Claude Code. */
+    var claudeEffort: String
+        get() = preferences.getString("agent_claude_effort", "default") ?: "default"
+        set(value) { preferences.edit().putString("agent_claude_effort", value).apply() }
+
     var antigravitySignedIn: Boolean
         get() = preferences.getBoolean("agent_antigravity_signed_in", false)
         set(value) { preferences.edit().putBoolean("agent_antigravity_signed_in", value).apply() }

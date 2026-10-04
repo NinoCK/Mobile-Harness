@@ -70,6 +70,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -103,6 +104,7 @@ import com.jarves.mh.network.ConnectionValidation
 import com.jarves.mh.network.DiscoveredModel
 import com.jarves.mh.network.ModelDiscoveryResult
 import com.jarves.mh.runtime.AntigravityAuthStatus
+import com.jarves.mh.runtime.ClaudeAuthStatus
 import com.jarves.mh.ui.theme.PocketBlue
 import com.jarves.mh.ui.theme.PocketOrange
 import kotlinx.coroutines.launch
@@ -174,6 +176,9 @@ fun AgentScreen(
     onRefreshAntigravityModels: () -> Unit = {},
     onSetAntigravityModel: (String) -> Unit = {},
     onSetAntigravityEffort: (String) -> Unit = {},
+    claudeSignIn: ClaudeSignInActions = ClaudeSignInActions(),
+    onSetClaudeModel: (String) -> Unit = {},
+    onSetClaudeEffort: (String) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var selectedKind by rememberSaveable(state.provider.kind) { mutableStateOf(state.provider.kind) }
@@ -203,6 +208,13 @@ fun AgentScreen(
     var statusProviderMessage by remember { mutableStateOf<String?>(null) }
     var keyConnectionStatuses by remember(selectedKind) {
         mutableStateOf<Map<String, KeyConnectionStatus>>(emptyMap())
+    }
+    LaunchedEffect(state.claudeAuth.status) {
+        // A completed in-app sign-in stored a new subscription token in the vault.
+        if (state.claudeAuth.status == ClaudeAuthStatus.SUCCESS && selectedKind == ProviderKind.CLAUDE) {
+            apiKey = getSavedApiKey(selectedKind)
+            savedKeys = getSavedApiKeys(selectedKind)
+        }
     }
     // Antigravity model sheet state
     var showAntigravityModelSheet by rememberSaveable { mutableStateOf(false) }
@@ -970,6 +982,9 @@ fun AgentScreen(
                 } else {
                     AgentProviderCard(
                         state = state,
+                        claudeSignIn = claudeSignIn,
+                        onSetClaudeModel = onSetClaudeModel,
+                        onSetClaudeEffort = onSetClaudeEffort,
                         selectedKind = selectedKind,
                         baseUrl = baseUrl,
                         model = model,
@@ -1475,6 +1490,9 @@ private fun AgentAntigravityCard(
 @Composable
 private fun AgentProviderCard(
     state: AppUiState,
+    claudeSignIn: ClaudeSignInActions,
+    onSetClaudeModel: (String) -> Unit,
+    onSetClaudeEffort: (String) -> Unit,
     selectedKind: ProviderKind,
     baseUrl: String,
     model: String,
@@ -1694,12 +1712,28 @@ private fun AgentProviderCard(
                     onClick = onOpenModelSheet,
                 )
             } else {
-                Text(
-                    "Run `claude setup-token` on a computer signed in to your Claude subscription, then save the generated token below.",
-                    fontSize = 12.sp,
-                    lineHeight = 17.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                ClaudeSignInPanel(
+                    auth = state.claudeAuth,
+                    hasStoredToken = savedKeys.isNotEmpty(),
+                    actions = claudeSignIn,
                     modifier = Modifier.padding(vertical = 12.dp),
+                )
+                // Model/effort only apply once Claude subscription is the saved provider.
+                if (state.provider.kind == ProviderKind.CLAUDE) {
+                    ClaudeSubscriptionOptions(
+                        model = state.provider.model,
+                        effort = state.claudeEffort,
+                        onModel = onSetClaudeModel,
+                        onEffort = onSetClaudeEffort,
+                        modifier = Modifier.padding(bottom = 12.dp),
+                    )
+                }
+                Text(
+                    "Or run `claude setup-token` on a computer signed in to your Claude subscription and save the generated token below.",
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 12.dp),
                 )
             }
 

@@ -32,7 +32,7 @@ import org.json.JSONObject
 import org.json.JSONArray
 
 internal object ProviderRuntimeErrorDetector {
-    fun detect(line: String): String? {
+    fun detect(line: String, subscription: Boolean = false): String? {
         val json = runCatching { JSONObject(line) }.getOrNull()
         val combined = buildString {
             append(line)
@@ -45,6 +45,22 @@ internal object ProviderRuntimeErrorDetector {
                 append(it.optString("result"))
             }
         }.lowercase()
+        if (subscription) {
+            val status = json?.takeIf { it.optString("subtype") == "api_retry" }?.optInt("error_status")
+            return when {
+                "http 429" in combined || "rate limit" in combined || "usage limit" in combined || status == 429 ->
+                    "Your Claude subscription's usage limit was reached. Try again after it resets."
+                "authentication_failed" in combined ||
+                    "authentication failed" in combined ||
+                    "invalid api key" in combined ||
+                    "oauth token" in combined && "expired" in combined ||
+                    "http 401" in combined ||
+                    "http 403" in combined ||
+                    status == 401 || status == 403 ->
+                    "Claude rejected the subscription token. Sign in with Claude again from Agent → AI provider."
+                else -> null
+            }
+        }
         return when {
             "user not found" in combined -> "User not found. Check the API key and provider account."
             "authentication_failed" in combined ||
@@ -63,8 +79,42 @@ internal object ProviderRuntimeErrorDetector {
     }
 }
 
+/** Claude Code print-mode command line used for every coding task. */
+internal fun claudePrintCommand(
+    executable: String,
+    prompt: String,
+    model: String,
+    subscription: Boolean,
+    effort: String = "",
+): List<String> = buildList {
+    add(executable)
+    // --bare limits Claude Code to ANTHROPIC_API_KEY/apiKeyHelper and never
+    // reads CLAUDE_CODE_OAUTH_TOKEN, so a subscription run must not use it or
+    // every request goes out without credentials.
+    if (!subscription) add("--bare")
+    add("-p")
+    add(prompt)
+    add("--output-format")
+    add("stream-json")
+    add("--include-partial-messages")
+    add("--verbose")
+    // A subscription on "default" lets Claude Code pick its plan's default model.
+    if (!subscription || (model.isNotBlank() && model != ProviderKind.CLAUDE.defaultModel)) {
+        add("--model")
+        add(model)
+    }
+    if (subscription && effort in com.jarves.mh.model.ClaudeEffortLevels.map { it.first } && effort != "default") {
+        add("--effort")
+        add(effort)
+    }
+    add("--max-turns")
+    add("25")
+}
+
 class ClaudeRuntimeBridge(
     private val context: Context,
+    /** Claude Code `--effort` for subscription runs. */
+    private val effort: () -> String = { "" },
     private val secretFor: (ProviderProfile) -> String?,
 ) : RuntimeBridge {
     private val installer = RuntimeInstaller(context)
@@ -148,6 +198,7 @@ class ClaudeRuntimeBridge(
             openRouterGateway = if (
                 provider.kind == ProviderKind.LLM_ROUTER && provider.openRouterProviders.isNotEmpty()
             ) OpenRouterRoutingGateway(provider, secret).start() else null
+            val subscription = provider.kind.protocol == com.jarves.mh.model.ProviderProtocol.CLAUDE_LOGIN
             val launch = RuntimeLaunchConfigBuilder.build(
                 provider,
                 authToken = secret,
@@ -160,20 +211,13 @@ class ClaudeRuntimeBridge(
             val guestWorkspacePath = "/workspace/$projectSlug"
             val contextPrompt = buildContextPrompt(prompt, conversationHistory, guestWorkspacePath, projectKind)
 
-            val command = buildList {
-                add(launch.executable)
-                add("--bare")
-                add("-p")
-                add(contextPrompt)
-                add("--output-format")
-                add("stream-json")
-                add("--include-partial-messages")
-                add("--verbose")
-                add("--model")
-                add(launch.environment["ANTHROPIC_MODEL"] ?: provider.model)
-                add("--max-turns")
-                add("25")
-            }
+            val command = claudePrintCommand(
+                executable = launch.executable,
+                prompt = contextPrompt,
+                model = launch.environment["ANTHROPIC_MODEL"] ?: provider.model,
+                subscription = subscription,
+                effort = effort(),
+            )
             Log.d("ClaudeBridge", "Launching command: $command")
             val process = installer.process(
                 installed.proot,
@@ -212,7 +256,7 @@ class ClaudeRuntimeBridge(
                             pendingOutput.delete(0, newline + 1)
                             if (line.isNotBlank()) {
                                 Log.d("ClaudeBridge", "OUTPUT: $line")
-                                ProviderRuntimeErrorDetector.detect(line)?.let { reason ->
+                                ProviderRuntimeErrorDetector.detect(line, subscription)?.let { reason ->
                                     process.destroyForcibly()
                                     throw ProviderSessionException(reason)
                                 }

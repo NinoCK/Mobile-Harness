@@ -1856,7 +1856,7 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
             compressedBytes = 72_185_773L,
         )
         private const val CLAUDE_BUNDLED_VERSION = "2.1.263"
-        private const val CLAUDE_GUEST_PATH = "/usr/local/bin/claude"
+        const val CLAUDE_GUEST_PATH = "/usr/local/bin/claude"
         private val CLAUDE_BUNDLE = RuntimeBundle(
             label = "Claude Code",
             fileName = "pocketdev-claude-arm64-2026.09.1.tar.zst",

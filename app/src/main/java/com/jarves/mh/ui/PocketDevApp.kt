@@ -157,6 +157,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -196,11 +197,13 @@ import com.jarves.mh.model.inferredDshApiForUrl
 import com.jarves.mh.model.providersForAgent
 import com.jarves.mh.model.ToolRequest
 import com.jarves.mh.model.WorkspaceEntry
+import com.jarves.mh.model.FileExportPhase
 import com.jarves.mh.model.projectSlug
 import com.jarves.mh.runtime.RuntimeExecutionService
 import com.jarves.mh.runtime.RuntimeSetupService
 import com.jarves.mh.runtime.supportsArm64Runtime
 import com.jarves.mh.runtime.AntigravityAuthStatus
+import com.jarves.mh.runtime.ClaudeAuthState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
@@ -309,6 +312,14 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onDiscover = viewModel::discoverModels,
             onValidate = viewModel::validateProvider,
             onSelectAgent = viewModel::chooseOnboardingAgent,
+            claudeAuth = state.claudeAuth,
+            claudeSignIn = ClaudeSignInActions(
+                onStart = viewModel::startClaudeLogin,
+                onReopenBrowser = viewModel::reopenClaudeLogin,
+                onOpenManual = viewModel::openClaudeManualLogin,
+                onSubmitCode = viewModel::submitClaudeAuthCode,
+                onCancel = viewModel::cancelClaudeLogin,
+            ),
             onToggleTheme = viewModel::toggleTheme,
             themeMode = state.themeMode,
         )
@@ -326,6 +337,8 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
         )
         state.activeProject != null && state.workspaceVisible -> WorkspaceScreen(
             state = state,
+            onSetClaudeModel = viewModel::setClaudeModel,
+            onSetClaudeEffort = viewModel::setClaudeEffort,
             onBack = viewModel::closeProject,
             onSend = viewModel::sendPrompt,
             onStop = viewModel::stopTask,
@@ -351,6 +364,13 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onTerminalCancel = viewModel::cancelProjectTerminalCommand,
             onUseSuggestedProjectRoot = viewModel::useSuggestedProjectRoot,
             onExportProject = viewModel::exportActiveProject,
+            onExportSelection = viewModel::exportWorkspaceSelection,
+            onSaveFile = viewModel::saveWorkspaceFile,
+            onCancelExport = viewModel::cancelWorkspaceExport,
+            onDismissExport = viewModel::dismissWorkspaceExport,
+            onOpenExportLocation = viewModel::openExportLocation,
+            onOpenDirectory = viewModel::openWorkspaceDirectory,
+            onSelectionChange = viewModel::setWorkspaceSelection,
             onAddAttachments = viewModel::addChatAttachments,
             onRemoveAttachment = viewModel::removePendingAttachment,
             onOpenAttachment = viewModel::openChatAttachment,
@@ -2112,6 +2132,15 @@ private fun RootScreenHost(
                     onRefreshAntigravityModels = viewModel::refreshAntigravityModels,
                     onSetAntigravityModel = viewModel::setAntigravityModel,
                     onSetAntigravityEffort = viewModel::setAntigravityEffort,
+                    claudeSignIn = ClaudeSignInActions(
+                        onStart = viewModel::startClaudeLogin,
+                        onReopenBrowser = viewModel::reopenClaudeLogin,
+                        onOpenManual = viewModel::openClaudeManualLogin,
+                        onSubmitCode = viewModel::submitClaudeAuthCode,
+                        onCancel = viewModel::cancelClaudeLogin,
+                    ),
+                    onSetClaudeModel = viewModel::setClaudeModel,
+                    onSetClaudeEffort = viewModel::setClaudeEffort,
                 )
                 RootScreen.SETTINGS -> SettingsScreen(
                     state = state,
@@ -2257,6 +2286,8 @@ private fun ProviderSetupScreen(
     onSelectAgent: (AgentKind) -> Unit,
     onToggleTheme: (() -> Unit)? = null,
     themeMode: AppThemeMode = AppThemeMode.DARK,
+    claudeAuth: ClaudeAuthState = ClaudeAuthState(),
+    claudeSignIn: ClaudeSignInActions = ClaudeSignInActions(),
 ) {
     val context = LocalContext.current
     var step by rememberSaveable { mutableIntStateOf(initialStep) }
@@ -2364,6 +2395,8 @@ private fun ProviderSetupScreen(
                         onSave(ProviderProfile(selected, url, model.trim(), dshApi = dshApi), apiKey)
                     },
                     onChangeAgent = { showAgentPicker = true },
+                    claudeAuth = claudeAuth,
+                    claudeSignIn = claudeSignIn,
                 )
             }
         }
@@ -2675,6 +2708,8 @@ private fun ProviderCredentialsStep(
     onValidate: suspend (List<DiscoveredModel>) -> ConnectionValidation,
     onSave: () -> Unit,
     onChangeAgent: () -> Unit,
+    claudeAuth: ClaudeAuthState = ClaudeAuthState(),
+    claudeSignIn: ClaudeSignInActions = ClaudeSignInActions(),
 ) {
     val scope = rememberCoroutineScope()
     var models by remember(baseUrl) { mutableStateOf(emptyList<DiscoveredModel>()) }
@@ -2701,6 +2736,8 @@ private fun ProviderCredentialsStep(
             onToken = onApiKey,
             onSave = onSave,
             onChangeAgent = onChangeAgent,
+            claudeAuth = claudeAuth,
+            claudeSignIn = claudeSignIn,
         )
         return
     }
@@ -2975,8 +3012,11 @@ private fun ClaudeSubscriptionCredentialsStep(
     onToken: (String) -> Unit,
     onSave: () -> Unit,
     onChangeAgent: () -> Unit,
+    claudeAuth: ClaudeAuthState,
+    claudeSignIn: ClaudeSignInActions,
 ) {
     var tokenVisible by rememberSaveable { mutableStateOf(false) }
+    var pasteTokenExpanded by rememberSaveable { mutableStateOf(false) }
     val hasToken = token.isNotBlank() || hasStoredToken
 
     LazyColumn(
@@ -3010,43 +3050,74 @@ private fun ClaudeSubscriptionCredentialsStep(
                 shape = RoundedCornerShape(20.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("1. On a computer where Claude Code is installed, run:", fontSize = 13.sp)
-                    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(10.dp)) {
-                        Text(
-                            "claude setup-token",
-                            modifier = Modifier.fillMaxWidth().padding(12.dp),
-                            fontFamily = FontFamily.Monospace,
-                            color = PocketOrange,
-                        )
-                    }
-                    Text("2. Sign in to Claude and paste the generated token here.", fontSize = 13.sp)
-                    OutlinedTextField(
-                        value = token,
-                        onValueChange = onToken,
-                        label = { Text("Claude setup token") },
-                        placeholder = { Text(if (hasStoredToken) "Saved securely — leave blank to keep it" else "Paste token") },
-                        supportingText = if (hasStoredToken && token.isBlank()) ({ Text("A saved subscription token is ready to use") }) else null,
-                        singleLine = true,
-                        visualTransformation = if (tokenVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        trailingIcon = {
-                            IconButton(onClick = { tokenVisible = !tokenVisible }) {
-                                Icon(if (tokenVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, "Toggle token visibility")
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
+                ClaudeSignInPanel(
+                    auth = claudeAuth,
+                    hasStoredToken = hasStoredToken,
+                    actions = claudeSignIn,
+                    modifier = Modifier.padding(16.dp),
+                )
             }
         }
         item {
-            Button(
-                onClick = onSave,
-                enabled = hasToken,
-                modifier = Modifier.fillMaxWidth().height(54.dp),
+            TextButton(
+                onClick = { pasteTokenExpanded = !pasteTokenExpanded },
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Save and continue")
+                Text(
+                    if (pasteTokenExpanded) "Hide manual token entry" else "Already have a token from another computer? Paste it",
+                    fontSize = 12.sp,
+                )
+            }
+        }
+        if (pasteTokenExpanded) {
+            item {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("On a computer where Claude Code is installed, run:", fontSize = 13.sp)
+                        Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(10.dp)) {
+                            Text(
+                                "claude setup-token",
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                fontFamily = FontFamily.Monospace,
+                                color = PocketOrange,
+                            )
+                        }
+                        Text("Then paste the generated token here.", fontSize = 13.sp)
+                        OutlinedTextField(
+                            value = token,
+                            onValueChange = onToken,
+                            label = { Text("Claude setup token") },
+                            placeholder = { Text(if (hasStoredToken) "Saved securely — leave blank to keep it" else "Paste token") },
+                            supportingText = if (hasStoredToken && token.isBlank()) ({ Text("A saved subscription token is ready to use") }) else null,
+                            singleLine = true,
+                            visualTransformation = if (tokenVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            trailingIcon = {
+                                IconButton(onClick = { tokenVisible = !tokenVisible }) {
+                                    Icon(if (tokenVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility, "Toggle token visibility")
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Button(
+                            onClick = onSave,
+                            enabled = hasToken,
+                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                        ) {
+                            Text("Save and continue")
+                        }
+                    }
+                }
+            }
+        } else if (hasStoredToken) {
+            item {
+                OutlinedButton(onClick = onSave, modifier = Modifier.fillMaxWidth().height(50.dp)) {
+                    Text("Continue with saved token")
+                }
             }
         }
         item {
@@ -3809,6 +3880,8 @@ private fun ReadOnlyProjectScreen(
 @Composable
 private fun WorkspaceScreen(
     state: AppUiState,
+    onSetClaudeModel: (String) -> Unit = {},
+    onSetClaudeEffort: (String) -> Unit = {},
     onBack: () -> Unit,
     onSend: (String) -> Unit,
     onStop: () -> Unit,
@@ -3833,7 +3906,14 @@ private fun WorkspaceScreen(
     onTerminalConfirm: () -> Unit,
     onTerminalCancel: () -> Unit,
     onUseSuggestedProjectRoot: () -> Unit,
-    onExportProject: (Uri) -> Unit,
+    onExportProject: (Uri, Boolean) -> Unit,
+    onExportSelection: (Uri, Boolean) -> Unit,
+    onSaveFile: (Uri, String) -> Unit,
+    onCancelExport: () -> Unit,
+    onDismissExport: () -> Unit,
+    onOpenExportLocation: () -> Unit,
+    onOpenDirectory: (String) -> Unit,
+    onSelectionChange: (Map<String, WorkspaceEntry>) -> Unit,
     onAddAttachments: (List<Uri>) -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onOpenAttachment: (ChatAttachment) -> Unit,
@@ -3843,10 +3923,6 @@ private fun WorkspaceScreen(
     val context = LocalContext.current
     val isAndroidProject = state.androidProjectDetected
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-    val exportProjectLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/zip"),
-        onResult = { uri -> if (uri != null) onExportProject(uri) },
-    )
     val attachmentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments(),
         onResult = onAddAttachments,
@@ -4065,17 +4141,37 @@ private fun WorkspaceScreen(
                         onTerminalOpened()
                         onTerminalPrepare(command)
                     },
+                    claudeOptions = if (state.agentKind == AgentKind.CLAUDE_CODE && state.provider.kind == ProviderKind.CLAUDE) {
+                        ClaudeChatOptions(state.provider.model, state.claudeEffort, onSetClaudeModel, onSetClaudeEffort)
+                    } else {
+                        null
+                    },
                 )
-                WorkspaceTab.FILES -> FilesTab(
+                WorkspaceTab.FILES -> WorkspaceFilesTab(
                     files = state.workspaceFiles,
+                    currentDir = state.workspaceCurrentDir,
+                    selection = state.workspaceSelection,
+                    artifacts = state.workspaceArtifacts,
                     loading = state.filesLoading,
+                    export = state.fileExport,
+                    exportBlockedReason = when {
+                        state.fileExport?.phase.let { it == FileExportPhase.SCANNING || it == FileExportPhase.WRITING } -> "An export is already running"
+                        state.isRunning || state.projectTerminalRunning -> "Stop the running task before exporting"
+                        else -> null
+                    },
+                    projectSlug = state.activeProject?.slug ?: "project",
                     suggestedProjectRoot = state.suggestedProjectRoot,
                     onRefresh = onRefreshFiles,
+                    onOpenDirectory = onOpenDirectory,
+                    onSelectionChange = onSelectionChange,
                     onOpenFile = onOpenFile,
                     onUseSuggestedProjectRoot = onUseSuggestedProjectRoot,
-                    onExport = {
-                        exportProjectLauncher.launch("${state.activeProject?.slug ?: "project"}.zip")
-                    },
+                    onExportProject = onExportProject,
+                    onExportSelection = onExportSelection,
+                    onSaveFile = onSaveFile,
+                    onCancelExport = onCancelExport,
+                    onDismissExport = onDismissExport,
+                    onOpenExportLocation = onOpenExportLocation,
                 )
                 WorkspaceTab.TERMINAL -> TerminalScreen(
                     lines = state.projectTerminalLines,
@@ -4276,149 +4372,6 @@ private fun FileViewerScreen(
 }
 
 @Composable
-private fun FilesTab(
-    files: List<WorkspaceEntry>,
-    loading: Boolean,
-    suggestedProjectRoot: String?,
-    onRefresh: () -> Unit,
-    onOpenFile: (WorkspaceEntry) -> Unit,
-    onUseSuggestedProjectRoot: () -> Unit,
-    onExport: () -> Unit,
-) {
-    var expandedDirectories by rememberSaveable { mutableStateOf(emptyList<String>()) }
-    LaunchedEffect(files.map { it.path }) {
-        val directories = files.asSequence().filter { it.isDirectory }.map { it.path }.toSet()
-        expandedDirectories = expandedDirectories.filter { it in directories }
-    }
-    val expandedSet = expandedDirectories.toSet()
-    val visibleFiles = files.filter { entry ->
-        val segments = entry.path.split('/')
-        segments.size == 1 || (1 until segments.size).all { depth ->
-            segments.take(depth).joinToString("/") in expandedSet
-        }
-    }
-    val directChildCounts = files.filter { candidate ->
-        candidate.path.contains('/')
-    }.groupingBy { candidate -> candidate.path.substringBeforeLast('/') }.eachCount()
-
-    LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        item {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
-                border = androidx.compose.foundation.BorderStroke(
-                    1.dp,
-                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
-                ),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "Files",
-                        Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    if (expandedDirectories.isNotEmpty()) {
-                        TextButton(onClick = { expandedDirectories = emptyList() }) {
-                            Icon(Icons.Default.KeyboardArrowUp, null, Modifier.size(17.dp))
-                            Spacer(Modifier.width(3.dp))
-                            Text("Collapse all", fontSize = 11.sp)
-                        }
-                    }
-                    if (!loading && files.any { !it.isDirectory }) {
-                        IconButton(onClick = onExport) { Icon(Icons.Default.Download, "Export project as ZIP") }
-                    }
-                    if (loading) {
-                        CircularProgressIndicator(Modifier.padding(12.dp).size(20.dp), strokeWidth = 2.dp)
-                    } else {
-                        IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "Refresh files") }
-                    }
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-        }
-        if (suggestedProjectRoot != null) {
-            item(key = "suggested-project-root") {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Project folder detected", fontWeight = FontWeight.Bold)
-                        Text(
-                            "Use $suggestedProjectRoot as the project root so Chat, Terminal, Changes, and Preview all run from the same folder.",
-                            fontSize = 13.sp,
-                        )
-                        Button(onClick = onUseSuggestedProjectRoot, modifier = Modifier.fillMaxWidth()) {
-                            Text("Use $suggestedProjectRoot as project root")
-                        }
-                    }
-                }
-            }
-        }
-        if (!loading && files.isEmpty()) {
-            item { EmptyState(Icons.Default.Folder, "No files yet", "Ask your coding agent to create something in this project.") }
-        }
-        items(visibleFiles, key = { it.path }) { entry ->
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        if (entry.isDirectory) {
-                            expandedDirectories = if (entry.path in expandedSet) {
-                                expandedDirectories.filterNot { it == entry.path || it.startsWith("${entry.path}/") }
-                            } else {
-                                expandedDirectories + entry.path
-                            }
-                        } else {
-                            onOpenFile(entry)
-                        }
-                    }
-                    .padding(start = (entry.depth * 20).dp)
-                    .padding(vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (entry.isDirectory) {
-                    Icon(
-                        if (entry.path in expandedSet) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        if (entry.path in expandedSet) "Collapse folder" else "Expand folder",
-                        Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.width(5.dp))
-                }
-                Icon(
-                    if (entry.isDirectory) Icons.Default.Folder else Icons.Default.Description,
-                    null,
-                    tint = if (entry.isDirectory) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.width(11.dp))
-                Text(
-                    if (entry.isDirectory) "${entry.name} (${directChildCounts[entry.path] ?: 0})" else entry.name,
-                    Modifier.weight(1f),
-                    color = if (!entry.isDirectory) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                )
-                if (!entry.isDirectory) {
-                    Spacer(Modifier.width(8.dp))
-                    Text(formatFileSize(entry.sizeBytes), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.width(4.dp))
-                    Icon(
-                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                        null,
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            if (!entry.isDirectory) {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f), modifier = Modifier.padding(start = (entry.depth * 20 + 42).dp))
-            }
-        }
-    }
-}
-
-@Composable
 private fun ChatTab(
     messages: List<ChatMessage>,
     approval: ToolRequest?,
@@ -4440,6 +4393,7 @@ private fun ChatTab(
     readOnly: Boolean = false,
     readOnlyBlocked: Boolean = false,
     onContinueHere: () -> Unit = {},
+    claudeOptions: ClaudeChatOptions? = null,
 ) {
     val view = LocalView.current
     // Keep the screen on while the selected agent is working in this chat. Released automatically
@@ -4578,6 +4532,14 @@ private fun ChatTab(
 
                 val canSend = prompt.isNotBlank() || pendingAttachments.isNotEmpty()
 
+                if (claudeOptions != null) {
+                    ClaudeChatOptionsChip(
+                        options = claudeOptions,
+                        enabled = !isRunning,
+                        modifier = Modifier.padding(start = 4.dp, bottom = 6.dp),
+                    )
+                }
+
                 Surface(
                     shape = RoundedCornerShape(26.dp),
                     color = MaterialTheme.colorScheme.surface,
@@ -4587,16 +4549,19 @@ private fun ChatTab(
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
+                    // Every control is ComposerControlSize tall with an equal inset,
+                    // so the round buttons sit concentric with the pill's ends and
+                    // line up with a single line of text.
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                            .padding(ComposerInset),
                         verticalAlignment = Alignment.Bottom,
                     ) {
                         IconButton(
                             onClick = onAttach,
                             enabled = !isRunning && pendingAttachments.size < 5,
-                            modifier = Modifier.size(40.dp),
+                            modifier = Modifier.size(ComposerControlSize),
                         ) {
                             Icon(
                                 imageVector = Icons.Default.AttachFile,
@@ -4611,8 +4576,9 @@ private fun ChatTab(
                             onValueChange = { prompt = it },
                             modifier = Modifier
                                 .weight(1f)
+                                .heightIn(min = ComposerControlSize)
                                 .padding(horizontal = 4.dp, vertical = 10.dp)
-                                .heightIn(min = 20.dp, max = 130.dp),
+                                .heightIn(max = 130.dp),
                             textStyle = TextStyle(
                                 color = MaterialTheme.colorScheme.onSurface,
                                 fontSize = 15.sp,
@@ -4625,6 +4591,7 @@ private fun ChatTab(
                                     if (prompt.isEmpty()) {
                                         Text(
                                             text = "Message ${agentKind.title}…",
+                                            lineHeight = 20.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             fontSize = 15.sp,
                                         )
@@ -4639,7 +4606,8 @@ private fun ChatTab(
                         if (isRunning) {
                             Box(
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(ComposerControlSize)
+                                    .clip(CircleShape)
                                     .background(
                                         color = MaterialTheme.colorScheme.error,
                                         shape = CircleShape,
@@ -4657,7 +4625,8 @@ private fun ChatTab(
                         } else {
                             Box(
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(ComposerControlSize)
+                                    .clip(CircleShape)
                                     .background(
                                         color = if (canSend) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
                                         shape = CircleShape,
@@ -4687,6 +4656,9 @@ private fun ChatTab(
         }
     }
 }
+
+private val ComposerControlSize = 40.dp
+private val ComposerInset = 4.dp
 
 @Composable
 private fun LiveClaudeProcess(
@@ -5118,43 +5090,6 @@ private fun ApprovalCard(request: ToolRequest, onApproval: (Boolean) -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { onApproval(false) }, Modifier.weight(1f)) { Text("Reject") }
                 Button(onClick = { onApproval(true) }, Modifier.weight(1f)) { Text("Allow once") }
-            }
-        }
-    }
-}
-
-@Composable
-private fun FilesTab(files: List<WorkspaceEntry>, loading: Boolean, onRefresh: () -> Unit) {
-    LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Project files", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                if (loading) {
-                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                } else {
-                    IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "Refresh files") }
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-        }
-        if (!loading && files.isEmpty()) {
-            item { EmptyState(Icons.Default.Folder, "No files yet", "Ask your coding agent to create something in this project.") }
-        }
-        items(files, key = { it.path }) { entry ->
-            Row(
-                Modifier.fillMaxWidth().padding(start = (entry.depth * 20).dp).padding(vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    if (entry.isDirectory) Icons.Default.Folder else Icons.Default.Description,
-                    null,
-                    tint = if (entry.isDirectory) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.width(11.dp))
-                Text(entry.name, Modifier.weight(1f))
-                if (!entry.isDirectory) {
-                    Text(formatFileSize(entry.sizeBytes), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
             }
         }
     }
