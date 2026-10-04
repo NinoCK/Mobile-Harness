@@ -185,13 +185,17 @@ tasks.register("playReadinessCheck") {
 }
 
 dependencies {
-    implementation(platform("androidx.compose:compose-bom:2025.02.00"))
+    implementation(platform("androidx.compose:compose-bom:2026.06.01"))
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.browser:browser:1.8.0")
     implementation("androidx.activity:activity-compose:1.10.0")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3")
+    // Material 3 Expressive components (ButtonGroup, FloatingToolbar, LoadingIndicator, MaterialShapes)
+    // ship only in the 1.5 alphas. alpha18 is the newest that builds with AGP 8.13 / compileSdk 36
+    // (later alphas and Compose 1.12+ need AGP 9.1 and compileSdk 37).
+    implementation("androidx.compose.material3:material3:1.5.0-alpha18")
+    implementation("androidx.graphics:graphics-shapes:1.1.0")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")

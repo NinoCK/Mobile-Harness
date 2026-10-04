@@ -1,10 +1,9 @@
 <resources>
-    <!-- Light startup theme; values-night/themes.xml holds the dark one. Compose takes over after launch. -->
-    <style name="Theme.PocketDev" parent="android:style/Theme.Material.Light.NoActionBar">
+    <style name="Theme.PocketDev" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowBackground">@color/pocket_window_background</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
         <item name="android:statusBarColor">@color/pocket_window_background</item>
         <item name="android:navigationBarColor">@color/pocket_window_background</item>
         <item name="android:windowActionModeOverlay">true</item>

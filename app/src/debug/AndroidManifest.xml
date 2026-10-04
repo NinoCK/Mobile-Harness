@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: a screen gallery for checking the UI with sample data (no runtime needed). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity
+            android:name="com.jarves.mh.ui.UiGalleryActivity"
+            android:exported="true"
+            android:theme="@style/Theme.PocketDev" />
+    </application>
+</manifest>

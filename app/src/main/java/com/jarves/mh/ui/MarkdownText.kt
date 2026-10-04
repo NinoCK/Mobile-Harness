@@ -157,8 +157,8 @@ private fun QuoteBlock(quote: MarkdownBlock.BlockQuote) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -186,18 +186,16 @@ private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String
     val scope = rememberCoroutineScope()
 
     Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = Color(0xFF14171E),
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, Color(0xFF2A2E39), RoundedCornerShape(12.dp)),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth(),
     ) {
         Column {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF1C202B))
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                    .padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -205,7 +203,7 @@ private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String
                     text = block.language.ifBlank { "code" },
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
-                    color = Color(0xFF9AA0A6),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = FontFamily.Monospace,
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -237,7 +235,7 @@ private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String
                         Icon(
                             imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
                             contentDescription = "Copy code",
-                            tint = if (copied) PocketOrange else Color(0xFF9AA0A6),
+                            tint = if (copied) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(16.dp),
                         )
                     }
@@ -247,14 +245,14 @@ private fun CodeSnippetBlock(block: MarkdownBlock.CodeBlock, onRunCode: ((String
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(12.dp),
+                    .padding(16.dp),
             ) {
                 Text(
                     text = block.code,
                     fontFamily = FontFamily.Monospace,
                     fontSize = 13.sp,
                     lineHeight = 19.sp,
-                    color = Color(0xFFE2E8F0),
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
             }
         }

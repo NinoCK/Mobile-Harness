@@ -1,0 +1,4 @@
+<resources>
+    <!-- Matches the brand light background (Theme.kt) so launch has no flash. -->
+    <color name="pocket_window_background">#FFF8F6</color>
+</resources>

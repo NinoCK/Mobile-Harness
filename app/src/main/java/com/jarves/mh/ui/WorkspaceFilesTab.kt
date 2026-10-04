@@ -524,11 +524,11 @@ private fun FileRow(
                         "Not in project ZIP",
                         Modifier
                             .clip(RoundedCornerShape(6.dp))
-                            .background(PocketAmber.copy(alpha = 0.14f))
+                            .background(MaterialTheme.colorScheme.tertiaryContainer)
                             .padding(horizontal = 6.dp, vertical = 1.dp),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Medium,
-                        color = PocketAmber,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
                         maxLines = 1,
                     )
                 }

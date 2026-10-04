@@ -1,5 +1,18 @@
 package com.jarves.mh.ui
 
+import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.ToggleButton
+import androidx.compose.material3.SuggestionChipDefaults
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -85,10 +98,11 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jarves.mh.ui.theme.AppThemeMode
+import com.jarves.mh.ui.theme.LocalDarkTheme
 import com.jarves.mh.ui.theme.PocketGreen
 import com.jarves.mh.ui.theme.PocketOrange
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun TerminalScreen(
     lines: List<TerminalOutputLine>,
@@ -176,88 +190,33 @@ fun TerminalScreen(
     )
 
     Scaffold(
-        modifier = if (compactHeader) Modifier else Modifier.statusBarsPadding(),
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             if (compactHeader) {
-                Column {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(34.dp)
-                                .background(PocketOrange.copy(alpha = 0.12f), RoundedCornerShape(10.dp)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(Icons.Default.Terminal, contentDescription = null, tint = PocketOrange, modifier = Modifier.size(18.dp))
-                        }
-                        Spacer(Modifier.width(11.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(title, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                            Text(subtitle, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        IconButton(onClick = onClear, modifier = Modifier.size(38.dp)) {
-                            Icon(Icons.Default.DeleteOutline, contentDescription = "Clear output", modifier = Modifier.size(20.dp))
-                        }
-                        if (showThemeAction) {
-                            IconButton(onClick = onToggleTheme) {
-                                Icon(
-                                    if (themeMode == AppThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
-                                    contentDescription = "Toggle theme",
-                                )
-                            }
-                        }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 6.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(title, style = MaterialTheme.typography.titleMedium)
+                        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                     }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.24f))
+                    IconButton(onClick = onClear) { Icon(Icons.Rounded.DeleteSweep, contentDescription = "Clear output") }
                 }
             } else {
                 TopAppBar(
-                    modifier = Modifier.padding(top = 8.dp),
-                    title = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .background(
-                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                                        shape = RoundedCornerShape(9.dp),
-                                    )
-                                    .border(
-                                        width = 1.dp,
-                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.32f),
-                                        shape = RoundedCornerShape(9.dp),
-                                    ),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Terminal,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(17.dp),
-                                )
-                            }
-                            Spacer(Modifier.width(10.dp))
-                            Column {
-                                Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
-                                Text(subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                    },
+                    title = { Text(title) },
+                    subtitle = { Text(subtitle, maxLines = 1) },
                     actions = {
-                        IconButton(onClick = onClear) {
-                            Icon(Icons.Default.DeleteOutline, contentDescription = "Clear output")
-                        }
+                        IconButton(onClick = onClear) { Icon(Icons.Rounded.DeleteSweep, contentDescription = "Clear output") }
                         if (showThemeAction) {
                             IconButton(onClick = onToggleTheme) {
-                                Icon(
-                                    if (themeMode == AppThemeMode.DARK) Icons.Default.LightMode else Icons.Default.DarkMode,
-                                    contentDescription = "Toggle theme",
-                                )
+                                Icon(if (LocalDarkTheme.current) Icons.Rounded.LightMode else Icons.Rounded.DarkMode, contentDescription = "Toggle theme")
                             }
                         }
                     },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
                 )
             }
         },
@@ -279,47 +238,38 @@ fun TerminalScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     quickCommands.forEach { cmd ->
-                        AssistChip(
+                        SuggestionChip(
                             onClick = { onRun(cmd) },
-                            label = {
-                                Text(
-                                    cmd,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 11.sp,
-                                )
-                            },
+                            label = { Text(cmd, fontFamily = FontFamily.Monospace, fontSize = 12.sp) },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = SuggestionChipDefaults.suggestionChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+                            border = null,
                         )
                     }
                 }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
             }
 
-            val isDark = when (themeMode) {
-                AppThemeMode.DARK -> true
-                AppThemeMode.LIGHT -> false
-                AppThemeMode.SYSTEM -> isSystemInDarkTheme()
-            }
-            val terminalBg = if (isDark) Color(0xFF090D14) else MaterialTheme.colorScheme.surface
-            val promptGreen = if (isDark) PocketGreen else Color(0xFF0D7A3E)
-            val commandTextColor = if (isDark) Color(0xFFF0F6FC) else MaterialTheme.colorScheme.onSurface
-            val outputTextColor = if (isDark) Color(0xFFC9D1D9) else MaterialTheme.colorScheme.onSurface
-            val emptyStateColor = if (isDark) Color(0xFF6E7681) else MaterialTheme.colorScheme.onSurfaceVariant
+            val isDark = LocalDarkTheme.current
+            val terminalBg = if (isDark) MaterialTheme.colorScheme.surfaceContainerLowest else MaterialTheme.colorScheme.surfaceContainerLow
+            val promptGreen = PocketGreen
+            val commandTextColor = MaterialTheme.colorScheme.onSurface
+            val outputTextColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.87f)
+            val emptyStateColor = MaterialTheme.colorScheme.onSurfaceVariant
 
             // Console output area
             Surface(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 8.dp)
-                    .border(1.dp, if (isDark) MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f) else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 color = terminalBg,
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(24.dp),
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .verticalScroll(terminalScrollState)
-                        .padding(14.dp),
+                        .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     SelectionContainer {
@@ -449,9 +399,10 @@ fun TerminalScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 14.dp)
+                        .padding(horizontal = 12.dp)
                         .padding(bottom = 10.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     TerminalKeyButton("↑", "Previous command") {
                         commandHistory.getOrNull(if (historyIndex < 0) commandHistory.lastIndex else (historyIndex - 1).coerceAtLeast(0))?.let {
@@ -483,6 +434,7 @@ fun TerminalScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun TerminalKeyButton(
     label: String,
@@ -491,31 +443,29 @@ private fun TerminalKeyButton(
     fixedWidth: Boolean = false,
     onClick: () -> Unit,
 ) {
-    androidx.compose.material3.OutlinedButton(
-        onClick = onClick,
-        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-        modifier = Modifier.height(34.dp).then(if (fixedWidth) Modifier.width(78.dp) else Modifier),
-        colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
-            containerColor = if (active) PocketOrange.copy(alpha = 0.18f) else Color.Transparent,
-            contentColor = if (active) PocketOrange else MaterialTheme.colorScheme.onSurface,
-        ),
-        border = androidx.compose.foundation.BorderStroke(
-            1.dp,
-            if (active) PocketOrange else MaterialTheme.colorScheme.outlineVariant,
-        ),
-    ) {
-        Text(
-            if (active) "$label ✓" else label,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
-            maxLines = 1,
-        )
+    val modifier = Modifier.height(40.dp).semantics { contentDescription = description }
+    if (fixedWidth) {
+        // Sticky modifiers (ALT, CTRL) are real toggle buttons.
+        ToggleButton(
+            checked = active,
+            onCheckedChange = { onClick() },
+            modifier = modifier.width(80.dp),
+            contentPadding = PaddingValues(horizontal = 10.dp),
+        ) { Text(label, fontFamily = FontFamily.Monospace, fontSize = 13.sp, maxLines = 1) }
+    } else {
+        FilledTonalButton(
+            onClick = onClick,
+            shapes = ButtonDefaults.shapes(),
+            modifier = modifier,
+            contentPadding = PaddingValues(horizontal = 14.dp),
+        ) { Text(label, fontFamily = FontFamily.Monospace, fontSize = 13.sp, maxLines = 1) }
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun TerminalIconKeyButton(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, onClick: () -> Unit) {
-    IconButton(onClick = onClick, modifier = Modifier.size(34.dp)) {
+    FilledTonalIconButton(onClick = onClick, shapes = IconButtonDefaults.shapes(), modifier = Modifier.size(40.dp)) {
         Icon(icon, contentDescription = description, modifier = Modifier.size(18.dp))
     }
 }

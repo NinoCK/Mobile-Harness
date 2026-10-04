@@ -100,7 +100,7 @@ class AppPreferences(private val context: Context) {
         set(value) { preferences.edit().putString("dsh_version", value).apply() }
 
     var themeMode: String
-        get() = preferences.getString("theme_mode", "dark") ?: "dark"
+        get() = preferences.getString("theme_mode", "system") ?: "system"
         set(value) { preferences.edit().putString("theme_mode", value).apply() }
 
     var legacySeededCredentialRemoved: Boolean

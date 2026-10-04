@@ -171,7 +171,7 @@ data class AppUiState(
     val backgroundSetupComplete: Boolean = false,
     val provider: ProviderProfile = ProviderProfile(ProviderKind.ANTHROPIC),
     val activeApiKeyName: String? = null,
-    val themeMode: com.jarves.mh.ui.theme.AppThemeMode = com.jarves.mh.ui.theme.AppThemeMode.DARK,
+    val themeMode: com.jarves.mh.ui.theme.AppThemeMode = com.jarves.mh.ui.theme.AppThemeMode.SYSTEM,
     val apiPingStatus: ApiPingStatus = ApiPingStatus.IDLE,
     val apiPingMessage: String? = null,
     val projects: List<Project> = emptyList(),
@@ -349,7 +349,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             antigravityEffort = preferences.antigravityEffort,
             claudeEffort = preferences.claudeEffort,
             themeMode = runCatching { com.jarves.mh.ui.theme.AppThemeMode.valueOf(preferences.themeMode.uppercase()) }
-                .getOrDefault(com.jarves.mh.ui.theme.AppThemeMode.DARK),
+                .getOrDefault(com.jarves.mh.ui.theme.AppThemeMode.SYSTEM),
             projects = preferences.loadProjects(),
             githubAuthStatus = GitHubAuthStatus.DISCONNECTED,
             githubLogin = preferences.githubLogin.takeIf(String::isNotBlank),
@@ -971,13 +971,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         Regex("(?m)(^|[;&|]\\s*)(?:\\./)?gradle(?:w)?(?:\\s|$)", RegexOption.IGNORE_CASE).containsMatchIn(command)
 
 
-    fun toggleTheme() {
-        val next = if (_state.value.themeMode == com.jarves.mh.ui.theme.AppThemeMode.DARK) {
-            com.jarves.mh.ui.theme.AppThemeMode.LIGHT
-        } else {
-            com.jarves.mh.ui.theme.AppThemeMode.DARK
-        }
-        setThemeMode(next)
+    /** Flips the visible theme; [systemDark] is the device's current dark-mode setting. */
+    fun toggleTheme(systemDark: Boolean) {
+        setThemeMode(com.jarves.mh.ui.theme.toggledThemeMode(_state.value.themeMode, systemDark))
     }
 
     fun setThemeMode(mode: com.jarves.mh.ui.theme.AppThemeMode) {

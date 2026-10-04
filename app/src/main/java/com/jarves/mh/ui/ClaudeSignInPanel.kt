@@ -1,5 +1,9 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
+
 package com.jarves.mh.ui
 
+import com.jarves.mh.ui.theme.LocalPocketExtraColors
+import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -95,7 +99,6 @@ data class ClaudeSignInActions(
     val onCancel: () -> Unit = {},
 )
 
-private val SignedInGreen = Color(0xFF2E9D72)
 
 /**
  * "Sign in with Claude": runs the official `claude setup-token` flow on the
@@ -117,12 +120,12 @@ internal fun ClaudeSignInPanel(
             ClaudeAuthStatus.IDLE, ClaudeAuthStatus.ERROR, ClaudeAuthStatus.SUCCESS -> {
                 if (auth.status == ClaudeAuthStatus.SUCCESS || (hasStoredToken && auth.status == ClaudeAuthStatus.IDLE)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.CheckCircle, null, Modifier.size(16.dp), tint = SignedInGreen)
+                        Icon(Icons.Default.CheckCircle, null, Modifier.size(16.dp), tint = LocalPocketExtraColors.current.success)
                         Spacer(Modifier.width(6.dp))
                         Text(
                             if (auth.status == ClaudeAuthStatus.SUCCESS) "Claude subscription connected" else "A subscription token is saved",
                             fontSize = 13.sp,
-                            color = SignedInGreen,
+                            color = LocalPocketExtraColors.current.success,
                             fontWeight = FontWeight.SemiBold,
                         )
                     }
@@ -156,7 +159,7 @@ internal fun ClaudeSignInPanel(
                 )
             }
             ClaudeAuthStatus.STARTING, ClaudeAuthStatus.COMPLETING -> {
-                LinearProgressIndicator(Modifier.fillMaxWidth())
+                LinearWavyProgressIndicator(Modifier.fillMaxWidth())
                 Text(
                     auth.message ?: if (auth.status == ClaudeAuthStatus.STARTING) "Starting Claude sign-in…" else "Finishing sign-in…",
                     fontSize = 13.sp,
@@ -164,7 +167,7 @@ internal fun ClaudeSignInPanel(
                 TextButton(onClick = actions.onCancel) { Text("Cancel") }
             }
             ClaudeAuthStatus.AWAITING_BROWSER -> {
-                LinearProgressIndicator(Modifier.fillMaxWidth())
+                LinearWavyProgressIndicator(Modifier.fillMaxWidth())
                 Text(
                     auth.message ?: "Sign in to Claude in your browser.",
                     fontSize = 13.sp,
@@ -502,8 +505,7 @@ internal fun ClaudeChatOptionsChip(
 
     Surface(
         shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
         modifier = modifier
             .clip(RoundedCornerShape(50))
             .clickable(enabled = enabled, onClickLabel = "Change model and effort") { showSheet = true }

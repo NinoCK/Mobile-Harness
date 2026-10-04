@@ -1,5 +1,36 @@
 package com.jarves.mh.ui
 
+import androidx.compose.material3.ToggleButtonDefaults
+import androidx.compose.material.icons.rounded.Terminal
+import androidx.compose.material.icons.rounded.SmartToy
+import androidx.compose.material.icons.rounded.PrivacyTip
+import androidx.compose.material.icons.rounded.PhoneAndroid
+import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.LightMode
+import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.DataObject
+import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.Code
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Android
+import androidx.compose.material.icons.automirrored.rounded.OpenInNew
+import android.os.Build
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.LinearWavyProgressIndicator
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.ToggleButton
+import androidx.compose.material3.ButtonGroupDefaults
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LargeFlexibleTopAppBar
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -106,9 +137,7 @@ import com.jarves.mh.ui.theme.AppThemeMode
 import com.jarves.mh.ui.theme.PocketOrange
 import kotlinx.coroutines.launch
 
-private enum class SettingsSection { APPEARANCE, TOOLS, RUNTIME, UPDATE_CHANNEL }
-
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun SettingsScreen(
     state: AppUiState,
@@ -125,6 +154,7 @@ fun SettingsScreen(
     onRemoveApiKey: (ProviderKind, String) -> List<ApiKeyInfo>,
     onInstallDevStack: (DevStack) -> Unit = {},
     onRemoveDevStack: (DevStack) -> Unit = {},
+    onSelectAgent: (AgentKind) -> Unit = {},
     onInstallAgent: (AgentKind) -> Unit = {},
     onCheckAgentUpdates: () -> Unit = {},
     onUpdateAgent: (AgentKind) -> Unit = {},
@@ -134,12 +164,14 @@ fun SettingsScreen(
     onRefreshAntigravityModels: () -> Unit = {},
     onSetAntigravityModel: (String) -> Unit = {},
     onSetAntigravityEffort: (String) -> Unit = {},
+    claudeSignIn: ClaudeSignInActions = ClaudeSignInActions(),
+    onSetClaudeModel: (String) -> Unit = {},
+    onSetClaudeEffort: (String) -> Unit = {},
     initialDebugUpdateManifestUrl: String = "",
     onSetDebugUpdateManifestUrl: (String) -> Unit = {},
     onClearDebugUpdateManifestUrl: () -> Unit = {},
 ) {
     val context = LocalContext.current
-    var expanded by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
     var terminalCleared by remember { mutableStateOf(false) }
     var showReliabilityHelp by rememberSaveable { mutableStateOf(false) }
     var stackPendingRemoval by remember { mutableStateOf<DevStack?>(null) }
@@ -147,237 +179,152 @@ fun SettingsScreen(
     stackPendingRemoval?.let { stack ->
         AlertDialog(
             onDismissRequest = { stackPendingRemoval = null },
+            icon = { Icon(Icons.Rounded.DeleteSweep, null) },
             title = { Text("Remove ${stack.label}?") },
-            text = {
-                Text("This removes the toolchain and its runtime caches to free storage. Your projects and source files will not be deleted.")
-            },
+            text = { Text("This removes the toolchain and its runtime caches to free storage. Your projects and source files are not deleted.") },
             confirmButton = {
-                TextButton(
+                Button(
                     onClick = {
                         stackPendingRemoval = null
                         onRemoveDevStack(stack)
                     },
-                ) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError),
+                ) { Text("Remove") }
             },
             dismissButton = { TextButton(onClick = { stackPendingRemoval = null }) { Text("Cancel") } },
         )
     }
 
-    fun toggle(section: SettingsSection) {
-        expanded = if (expanded == section) null else section
-    }
-
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
+        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        containerColor = MaterialTheme.colorScheme.surface,
         topBar = {
-            TopAppBar(
-                modifier = Modifier.padding(top = 8.dp),
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .background(
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                                    shape = RoundedCornerShape(9.dp),
-                                )
-                                .border(
-                                    width = 1.dp,
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.32f),
-                                    shape = RoundedCornerShape(9.dp),
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Settings,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(17.dp),
-                            )
-                        }
-                        Spacer(Modifier.width(10.dp))
-                        Column {
-                            Text("Settings", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
-                            Text("Preferences & Configuration", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+            LargeFlexibleTopAppBar(
+                title = { Text("Settings") },
+                subtitle = { Text("Mobile Harness ${BuildConfig.VERSION_NAME}") },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
+                ),
+                scrollBehavior = scrollBehavior,
             )
         },
     ) { padding ->
         LazyColumn(
-            Modifier.fillMaxSize().padding(padding).imePadding(),
-            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            Modifier.fillMaxSize().imePadding(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = padding.calculateTopPadding(),
+                bottom = padding.calculateBottomPadding() + 32.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-
-            item {
-                SettingsAccordion(
-                    title = "Appearance",
-                    subtitle = when (state.themeMode) { AppThemeMode.DARK -> "Dark theme"; AppThemeMode.LIGHT -> "Light theme"; AppThemeMode.SYSTEM -> "Follow system" },
-                    icon = Icons.Default.Tune,
-                    expanded = expanded == SettingsSection.APPEARANCE,
-                    onClick = { toggle(SettingsSection.APPEARANCE) },
-                ) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ModernThemeChoice("Dark", Icons.Default.DarkMode, state.themeMode == AppThemeMode.DARK, { onSetThemeMode(AppThemeMode.DARK) }, Modifier.weight(1f))
-                        ModernThemeChoice("Light", Icons.Default.LightMode, state.themeMode == AppThemeMode.LIGHT, { onSetThemeMode(AppThemeMode.LIGHT) }, Modifier.weight(1f))
-                        ModernThemeChoice("System", Icons.Default.PhoneAndroid, state.themeMode == AppThemeMode.SYSTEM, { onSetThemeMode(AppThemeMode.SYSTEM) }, Modifier.weight(1f))
-                    }
+            item(key = "agent-header") { SectionHeader("Coding agent") }
+            item(key = "agent") {
+                Box(Modifier.padding(horizontal = 4.dp)) {
+                    AgentSettingsSection(
+                        state = state,
+                        onSaveProvider = onSaveProvider,
+                        onDiscoverModels = onDiscoverModels,
+                        onValidateProvider = onValidateProvider,
+                        onPing = onPing,
+                        getSavedApiKey = getSavedApiKey,
+                        getSavedApiKeys = getSavedApiKeys,
+                        onAddApiKey = onAddApiKey,
+                        onActivateApiKey = onActivateApiKey,
+                        onRemoveApiKey = onRemoveApiKey,
+                        onSelectAgent = onSelectAgent,
+                        onInstallAgent = onInstallAgent,
+                        onCheckAgentUpdates = onCheckAgentUpdates,
+                        onUpdateAgent = onUpdateAgent,
+                        onStartAntigravityLogin = onStartAntigravityLogin,
+                        onSubmitAntigravityCode = onSubmitAntigravityCode,
+                        onLogoutAntigravity = onLogoutAntigravity,
+                        onRefreshAntigravityModels = onRefreshAntigravityModels,
+                        onSetAntigravityModel = onSetAntigravityModel,
+                        onSetAntigravityEffort = onSetAntigravityEffort,
+                        claudeSignIn = claudeSignIn,
+                        onSetClaudeModel = onSetClaudeModel,
+                        onSetClaudeEffort = onSetClaudeEffort,
+                    )
                 }
             }
 
-            item {
-                val installedCount = state.installedDevStacks.count { it != DevStack.WEB }
-                SettingsAccordion(
-                    title = "Developer tools",
-                    subtitle = "Core tools + $installedCount optional toolchain${if (installedCount == 1) "" else "s"}",
-                    icon = Icons.Default.Code,
-                    expanded = expanded == SettingsSection.TOOLS,
-                    onClick = { toggle(SettingsSection.TOOLS) },
-                ) {
-                    Text("Node.js, npm, Git, and Claude Code are included.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(8.dp))
-                    DevStack.entries.forEachIndexed { index, stack ->
-                        val installed = stack in state.installedDevStacks
-                        val installing = state.devStackInstalling == stack
-                        val removing = installing && state.devStackRemoving
-                        Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(stack.label, fontWeight = FontWeight.SemiBold)
-                                Text(stack.installsSummary, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
-                            when {
-                                removing -> Text("Removing…", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                installing -> Text("${(state.devStackProgress * 100).toInt()}%", color = PocketOrange, fontWeight = FontWeight.Bold)
-                                installed && stack == DevStack.WEB -> Text("Included", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                installed -> TextButton(
-                                    onClick = { stackPendingRemoval = stack },
-                                    enabled = state.devStackInstalling == null,
-                                ) { Text("Remove", color = MaterialTheme.colorScheme.error) }
-                                else -> OutlinedButton(onClick = { onInstallDevStack(stack) }, enabled = state.devStackInstalling == null) { Text("Add") }
-                            }
-                        }
-                        if (installing) {
-                            Spacer(Modifier.height(4.dp))
-                            LinearProgressIndicator(
-                                progress = { state.devStackProgress.coerceIn(0f, 1f) },
-                                modifier = Modifier.fillMaxWidth().height(7.dp),
-                                color = PocketOrange,
-                                trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                            )
-                            Spacer(Modifier.height(9.dp))
-                            state.devStackBytes?.let { (downloaded, total) ->
-                                Surface(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                                ) {
-                                    Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                            Text(
-                                                "${formatTransferMb(downloaded)} of ${formatTransferMb(total)}",
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                                fontFamily = FontFamily.Monospace,
-                                            )
-                                            state.devStackBytesPerSecond?.takeIf { it > 0L }?.let { speed ->
-                                                Text(
-                                                    "${formatTransferSpeed(speed)} · ${formatTransferEta(downloaded, total, speed)} left",
-                                                    fontSize = 11.sp,
-                                                    color = PocketOrange,
-                                                    fontFamily = FontFamily.Monospace,
-                                                )
-                                            }
-                                        }
-                                        Text(
-                                            state.devStackMessage ?: "Downloading…",
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    }
-                                }
-                            } ?: Text(
-                                state.devStackMessage ?: "Processing…",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        if (index != DevStack.entries.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    }
-                }
+            item(key = "appearance-header") { SectionHeader("Appearance") }
+            item(key = "appearance") { ThemeChooser(state.themeMode, onSetThemeMode) }
+
+            item(key = "tools-header") { SectionHeader("Developer tools") }
+            itemsIndexed(DevStack.entries, key = { _, stack -> "stack-${stack.name}" }) { index, stack ->
+                DevStackRow(
+                    stack = stack,
+                    index = index,
+                    count = DevStack.entries.size,
+                    state = state,
+                    onInstall = { onInstallDevStack(stack) },
+                    onRemove = { stackPendingRemoval = stack },
+                )
             }
 
-            item {
-                SettingsAccordion(
-                    title = "Linux runtime",
-                    subtitle = "Ubuntu 20.04 PRoot · ARM64",
-                    icon = Icons.Default.Terminal,
-                    expanded = expanded == SettingsSection.RUNTIME,
-                    onClick = { toggle(SettingsSection.RUNTIME) },
-                ) {
-                    RuntimeInfoRow("Architecture", "ARM64 (aarch64)")
-                    RuntimeInfoRow("Environment", "Ubuntu 20.04 PRoot")
-                    RuntimeInfoRow(
-                        "Active agent",
-                        state.agentKind.title + if (state.installedAgentVersions.containsKey(state.agentKind)) "" else " · Not installed",
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    Text(
-                        "Installed agents",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (state.installedAgentVersions.isEmpty()) {
-                        RuntimeInfoRow("Status", "No verified agent installation")
-                    } else {
-                        AgentKind.entries.forEach { agent ->
-                            state.installedAgentVersions[agent]?.let { version ->
-                                RuntimeInfoRow(agent.title, "v$version")
+            item(key = "runtime-header") { SectionHeader("Linux runtime") }
+            item(key = "runtime-env") {
+                GroupedRow(0, 4, "Ubuntu 20.04 PRoot", supporting = "ARM64 (aarch64) sandbox on this phone", icon = Icons.Rounded.Terminal)
+            }
+            item(key = "runtime-agents") {
+                val installed = AgentKind.entries.mapNotNull { agent -> state.installedAgentVersions[agent]?.let { "${agent.title} $it" } }
+                GroupedRow(
+                    1,
+                    4,
+                    "Installed agents",
+                    supporting = installed.joinToString(" · ").ifBlank { "No verified agent installation" },
+                    icon = Icons.Rounded.SmartToy,
+                )
+            }
+            item(key = "runtime-clear") {
+                GroupedRow(
+                    2,
+                    4,
+                    "Clear terminal history",
+                    supporting = if (terminalCleared) "Terminal history cleared" else "Removes saved commands and output",
+                    icon = Icons.Rounded.DeleteSweep,
+                    onClick = { onClearTerminal(); terminalCleared = true },
+                    trailing = { if (terminalCleared) Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.primary) },
+                )
+            }
+            item(key = "runtime-reliability") {
+                GroupedRow(
+                    3,
+                    4,
+                    "Runtime reliability",
+                    supporting = "Help when large builds stop unexpectedly",
+                    icon = Icons.Rounded.Memory,
+                    onClick = { showReliabilityHelp = !showReliabilityHelp },
+                    trailing = { Icon(if (showReliabilityHelp) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null) },
+                    below = {
+                        AnimatedVisibility(showReliabilityHelp) {
+                            Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text(
+                                    "Android Developer options may provide a child-process restriction toggle that lets long builds keep running.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                FilledTonalButton(
+                                    onClick = {
+                                        runCatching { context.startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) }
+                                            .onFailure { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
+                                    },
+                                    shapes = ButtonDefaults.shapes(),
+                                ) { Text("Open Developer options") }
                             }
                         }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = { onClearTerminal(); terminalCleared = true },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(Icons.Default.DeleteSweep, null, Modifier.size(17.dp))
-                        Spacer(Modifier.width(7.dp))
-                        Text(if (terminalCleared) "Terminal history cleared" else "Clear terminal history")
-                    }
-                    OutlinedButton(
-                        onClick = { showReliabilityHelp = !showReliabilityHelp },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Advanced runtime reliability")
-                    }
-                    AnimatedVisibility(showReliabilityHelp) {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                "If large builds stop unexpectedly, Android Developer options may provide a child-process restriction toggle.",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Button(
-                                onClick = {
-                                    runCatching { context.startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) }
-                                        .onFailure { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) { Text("Open Developer options") }
-                        }
-                    }
-                }
+                    },
+                )
             }
 
             if (BuildConfig.DEBUG) {
-                item {
+                item(key = "debug-header") { SectionHeader("Debug") }
+                item(key = "debug") {
                     DebugUpdateChannelSection(
                         initialUrl = initialDebugUpdateManifestUrl,
                         onSave = onSetDebugUpdateManifestUrl,
@@ -386,60 +333,148 @@ fun SettingsScreen(
                 }
             }
 
-            item {
-                Surface(
-                    color = Color.Transparent,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Settings, null, Modifier.size(20.dp), tint = PocketOrange)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Mobile Harness", fontWeight = FontWeight.SemiBold)
-                            Text("Local AI coding workspace", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Text("v${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            runCatching {
-                                context.startActivity(
-                                    Intent(Intent.ACTION_VIEW, Uri.parse(BuildConfig.PRIVACY_POLICY_URL)),
-                                )
-                            }
-                        }
-                        .padding(vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        Icons.Default.PrivacyTip,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("Privacy policy", fontWeight = FontWeight.Medium)
-                        Text(
-                            "How local data and AI provider requests are handled",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Icon(
-                        Icons.AutoMirrored.Filled.OpenInNew,
-                        contentDescription = "Open privacy policy",
-                        modifier = Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Spacer(Modifier.height(18.dp))
+            item(key = "about-header") { SectionHeader("About") }
+            item(key = "about-app") {
+                GroupedRow(
+                    0,
+                    2,
+                    "Mobile Harness",
+                    supporting = "Local AI coding workspace",
+                    icon = Icons.Rounded.Info,
+                    trailing = {
+                        Text("v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    },
+                )
+            }
+            item(key = "about-privacy") {
+                GroupedRow(
+                    1,
+                    2,
+                    "Privacy policy",
+                    supporting = "How local data and AI provider requests are handled",
+                    icon = Icons.Rounded.PrivacyTip,
+                    onClick = {
+                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(BuildConfig.PRIVACY_POLICY_URL))) }
+                    },
+                    trailing = { Icon(Icons.AutoMirrored.Rounded.OpenInNew, "Open privacy policy", tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                )
             }
         }
     }
+}
+
+/** Dark / light / system as an Expressive connected button group. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun ThemeChooser(mode: AppThemeMode, onSetThemeMode: (AppThemeMode) -> Unit) {
+    val options = listOf(
+        Triple(AppThemeMode.SYSTEM, "System", Icons.Rounded.PhoneAndroid),
+        Triple(AppThemeMode.LIGHT, "Light", Icons.Rounded.LightMode),
+        Triple(AppThemeMode.DARK, "Dark", Icons.Rounded.DarkMode),
+    )
+    Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Theme", style = MaterialTheme.typography.titleMedium)
+            Text(
+                when (mode) {
+                    AppThemeMode.SYSTEM -> "Follows your phone's dark mode"
+                    AppThemeMode.LIGHT -> "Always light"
+                    AppThemeMode.DARK -> "Always dark"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(14.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween)) {
+                options.forEachIndexed { index, (option, label, icon) ->
+                    ToggleButton(
+                        checked = mode == option,
+                        onCheckedChange = { onSetThemeMode(option) },
+                        shapes = when (index) {
+                            0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
+                            options.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
+                            else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
+                        },
+                        colors = ToggleButtonDefaults.toggleButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
+                        modifier = Modifier.weight(1f).semantics { role = Role.RadioButton },
+                    ) {
+                        Icon(icon, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(label, maxLines = 1)
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) "Colours follow your wallpaper." else "Colours use the Mobile Harness orange palette.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun DevStackRow(
+    stack: DevStack,
+    index: Int,
+    count: Int,
+    state: AppUiState,
+    onInstall: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    val installed = stack in state.installedDevStacks
+    val installing = state.devStackInstalling == stack
+    val removing = installing && state.devStackRemoving
+    GroupedRow(
+        index = index,
+        count = count,
+        headline = stack.label,
+        supporting = stack.installsSummary,
+        icon = devStackIcon(stack),
+        trailing = {
+            Spacer(Modifier.width(8.dp))
+            when {
+                removing -> Text("Removing…", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.error)
+                installing -> Text("${(state.devStackProgress * 100).toInt()}%", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                installed && stack == DevStack.WEB -> Text("Included", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                installed -> TextButton(onClick = onRemove, enabled = state.devStackInstalling == null) {
+                    Text("Remove", color = MaterialTheme.colorScheme.error)
+                }
+                else -> FilledTonalButton(onClick = onInstall, enabled = state.devStackInstalling == null, shapes = ButtonDefaults.shapes()) { Text("Add") }
+            }
+        },
+        below = {
+            AnimatedVisibility(installing) {
+                Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LinearWavyProgressIndicator(progress = { state.devStackProgress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+                    Text(
+                        state.devStackBytes?.let { (downloaded, total) ->
+                            buildString {
+                                append("${formatTransferMb(downloaded)} of ${formatTransferMb(total)}")
+                                state.devStackBytesPerSecond?.takeIf { it > 0L }?.let { speed ->
+                                    append(" · ${formatTransferSpeed(speed)} · ${formatTransferEta(downloaded, total, speed)} left")
+                                }
+                            }
+                        } ?: (state.devStackMessage ?: "Processing…"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        },
+    )
+}
+
+private fun devStackIcon(stack: DevStack): ImageVector = when (stack) {
+    DevStack.WEB -> Icons.Rounded.Language
+    DevStack.PYTHON -> Icons.Rounded.DataObject
+    DevStack.ANDROID -> Icons.Rounded.Android
+    DevStack.CPP -> Icons.Rounded.Memory
+    DevStack.PHP -> Icons.Rounded.Code
 }
 
 private fun formatTransferMb(bytes: Long): String = "%.1f MB".format(bytes.coerceAtLeast(0L) / 1_048_576.0)
@@ -465,9 +500,8 @@ private fun SettingsAccordion(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
     ) {
         Column {
             Row(
@@ -838,29 +872,7 @@ private fun SelectionDot(selected: Boolean) {
     }
 }
 
-@Composable
-private fun ModernThemeChoice(title: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier.clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        color = if (selected) PocketOrange.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        border = BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) PocketOrange else MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Column(Modifier.padding(vertical = 13.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, title, Modifier.size(20.dp), tint = if (selected) PocketOrange else MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(5.dp))
-            Text(title, fontSize = 12.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
-        }
-    }
-}
 
-@Composable
-private fun RuntimeInfoRow(label: String, value: String) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-        Text(value, fontWeight = FontWeight.Medium, fontSize = 13.sp)
-    }
-}
 
 @Composable
 private fun DebugUpdateChannelSection(

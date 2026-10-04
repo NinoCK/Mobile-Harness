@@ -1,0 +1,4 @@
+<resources>
+    <!-- Matches the brand dark background (Theme.kt). -->
+    <color name="pocket_window_background">#1A120D</color>
+</resources>
